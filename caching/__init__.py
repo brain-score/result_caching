@@ -63,12 +63,31 @@ class _Storage(object):
 
 
 class _DiskStorage(_Storage):
-    def __init__(self, storage_directory=os.path.expanduser("~/.caching"), identifier_ignore=()):
+    configured_storage = {}
+
+    @classmethod
+    def configure_storagedir(cls, directory):
+        caller = get_calling_function()
+        module = caller.__module__
+        cls.configured_storage[module] = directory
+
+    def __init__(self, storage_directory=None, identifier_ignore=()):
         super().__init__(identifier_ignore=identifier_ignore)
-        self.storage_directory = storage_directory
+        self._set_storage_directory = storage_directory is not None
+        self._storage_directory = storage_directory or os.path.expanduser("~/.caching")
+
+    def _get_storage_directory(self):
+        if not self._set_storage_directory:
+            # storage dir was not set explicitly, let's see if it was configured.
+            # if not, we can still use the default.
+            caller = get_calling_function()
+            calling_module = caller.__module__
+            if calling_module in self.configured_storage:
+                return self.configured_storage[calling_module]
+        return self._storage_directory
 
     def storage_path(self, function_identifier):
-        return os.path.join(self.storage_directory, function_identifier + '.pkl')
+        return os.path.join(self._get_storage_directory(), function_identifier + '.pkl')
 
     def save(self, result, function_identifier):
         path = self.storage_path(function_identifier)
@@ -266,6 +285,30 @@ def is_iterable(x):
 
 def _fullname(obj):
     return obj.__module__ + "." + obj.__class__.__name__
+
+
+def get_calling_function():
+    """finds the calling function in many decent cases."""
+    # https://stackoverflow.com/a/39079070/2225200
+    fr = inspect.stack()[1][0]
+    co = fr.f_code
+    for get in (
+            lambda: fr.f_globals[co.co_name],
+            lambda: getattr(fr.f_locals['self'], co.co_name),
+            lambda: getattr(fr.f_locals['cls'], co.co_name),
+            lambda: fr.f_back.f_locals[co.co_name],  # nested
+            lambda: fr.f_back.f_locals['func'],  # decorators
+            lambda: fr.f_back.f_locals['meth'],
+            lambda: fr.f_back.f_locals['f'],
+    ):
+        try:
+            func = get()
+        except (KeyError, AttributeError):
+            pass
+        else:
+            if func.__code__ == co:
+                return func
+    raise AttributeError("func not found")
 
 
 cache = _MemoryStorage

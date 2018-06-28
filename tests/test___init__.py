@@ -60,7 +60,7 @@ class TestXarrayStore:
 
 
 class TestStore:
-    def test(self):
+    def test_basic(self):
         storage_dir = tempfile.mkdtemp()
         function_called = False
 
@@ -75,6 +75,21 @@ class TestStore:
         assert os.path.isfile(os.path.join(storage_dir, 'test___init__.func', 'x=1.pkl'))
         # second call returns same thing and doesn't actually call function again
         assert func(1) == 1
+
+    def test_storage_configuration(self):
+        function_called = False
+
+        @store()
+        def func(x):
+            nonlocal function_called
+            assert not function_called
+            function_called = True
+            return x
+
+        storage_dir = tempfile.mkdtemp()
+        store.configure_storagedir(storage_dir)
+        func(1)
+        assert os.path.isfile(os.path.join(storage_dir, __name__ + '.func', 'x=1.pkl'))
 
 
 class TestCache:
