@@ -66,7 +66,7 @@ class _Storage(object):
 
 
 class _DiskStorage(_Storage):
-    def __init__(self, storage_directory=os.path.join(os.path.dirname(__file__), '..', 'output'), identifier_ignore=()):
+    def __init__(self, storage_directory=os.path.expanduser("~/.caching"), identifier_ignore=()):
         super().__init__(identifier_ignore=identifier_ignore)
         self.storage_directory = storage_directory
 
