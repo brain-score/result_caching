@@ -234,7 +234,7 @@ class _XarrayStorage(_DiskStorage):
         dims = data[coord].dims
         assert len(dims) == 1
         s = xr.DataArray(list(range(len(coord_value))), [(coord, coord_value)])
-        if dims[0] == 'layer':
+        if dims[0] == coord:
             return s
         return s.stack(**{dims[0]: [coord]})
 

@@ -39,7 +39,7 @@ class TestXarrayStore:
     def test_missing_coord(self):
         @store_xarray(storage_directory=tempfile.mkdtemp(), identifier_ignore=['x'], combine_fields=['x'])
         def func(x, base=1):
-            return xr.DataArray(x, coords={'x': x}, dims='x')
+            return xr.DataArray(0)
 
         with pytest.raises(ValueError):
             func([1])
@@ -72,7 +72,7 @@ class TestStore:
             return x
 
         assert func(1) == 1
-        assert os.path.isfile(os.path.join(storage_dir, 'test_storage.func', 'x=1.pkl'))
+        assert os.path.isfile(os.path.join(storage_dir, 'test___init__.func', 'x=1.pkl'))
         # second call returns same thing and doesn't actually call function again
         assert func(1) == 1
 
