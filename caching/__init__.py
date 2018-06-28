@@ -9,9 +9,6 @@ from typing import Union
 import numpy as np
 import xarray as xr
 
-from mkgu.assemblies import merge_data_arrays
-from mkgu.utils import fullname
-
 
 def get_function_identifier(function, call_args):
     function_identifier = os.path.join(function.__module__ + '.' + function.__name__,
@@ -27,7 +24,7 @@ class _Storage(object):
             Useful when the results do not depend on certain parameters.
         """
         self.identifier_ignore = identifier_ignore
-        self._logger = logging.getLogger(fullname(self))
+        self._logger = logging.getLogger(_fullname(self))
 
     def __call__(self, function):
         def wrapper(*args, **kwargs):
@@ -166,12 +163,18 @@ class _XarrayStorage(_DiskStorage):
 
     def merge_results(self, stored_result, result):
         if not self._sub_fields:
-            result = merge_data_arrays([stored_result, result])
+            result = self._merge_data_arrays([stored_result, result])
         else:
             for field in vars(result):
                 setattr(result, field,
-                        merge_data_arrays([getattr(stored_result, field), getattr(result, field)]))
+                        self._merge_data_arrays([getattr(stored_result, field), getattr(result, field)]))
         return result
+
+    def _merge_data_arrays(self, data_arrays):
+        # https://stackoverflow.com/a/50125997/2225200
+        merged = xr.merge([similarity.rename('z') for similarity in data_arrays])['z'].rename(None)
+        # ensure same class
+        return type(data_arrays[0])(merged)
 
     def ensure_callargs_present(self, result, infile_call_args):
         # make sure coords are set equal to call_args
@@ -259,6 +262,10 @@ def is_iterable(x):
         return True
     except TypeError:
         return False
+
+
+def _fullname(obj):
+    return obj.__module__ + "." + obj.__class__.__name__
 
 
 cache = _MemoryStorage
