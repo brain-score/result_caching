@@ -11,8 +11,19 @@ import xarray as xr
 
 
 def get_function_identifier(function, call_args):
-    function_identifier = os.path.join(function.__module__ + '.' + function.__name__,
-                                       ','.join('{}={}'.format(key, value) for key, value in call_args.items()))
+    module = [function.__module__, function.__name__]
+    if 'self' in call_args:
+        object = call_args['self']
+        class_name = object.__class__.__name__
+        if 'object at' in str(object):
+            object = class_name
+        else:
+            object = f"{class_name}({str(object)})"
+        module.insert(1, object)
+        del call_args['self']
+    module = '.'.join(module)
+    params = ','.join('{}={}'.format(key, value) for key, value in call_args.items())
+    function_identifier = os.path.join(module, params)
     return function_identifier
 
 
@@ -66,9 +77,10 @@ class _DiskStorage(_Storage):
     configured_storage = {}
 
     @classmethod
-    def configure_storagedir(cls, directory):
+    def configure_storagedir(cls, directory, module=None):
         caller = get_calling_function()
-        module = caller.__module__
+        module = module or caller.__module__
+        print(module)
         cls.configured_storage[module] = directory
 
     def __init__(self, storage_directory=None, identifier_ignore=()):
@@ -288,18 +300,22 @@ def _fullname(obj):
 
 
 def get_calling_function():
-    """finds the calling function in many decent cases."""
+    """
+    finds the calling function in many decent cases.
+
+    Note: this function is unreliable during debugging.
+    """
     # https://stackoverflow.com/a/39079070/2225200
     fr = inspect.stack()[1][0]
     co = fr.f_code
     for get in (
-            lambda: fr.f_globals[co.co_name],
-            lambda: getattr(fr.f_locals['self'], co.co_name),
-            lambda: getattr(fr.f_locals['cls'], co.co_name),
-            lambda: fr.f_back.f_locals[co.co_name],  # nested
-            lambda: fr.f_back.f_locals['func'],  # decorators
-            lambda: fr.f_back.f_locals['meth'],
-            lambda: fr.f_back.f_locals['f'],
+        lambda: fr.f_globals[co.co_name],
+        lambda: getattr(fr.f_locals['self'], co.co_name),
+        lambda: getattr(fr.f_locals['cls'], co.co_name),
+        lambda: fr.f_back.f_locals[co.co_name],  # nested
+        lambda: fr.f_back.f_locals['func'],  # decorators
+        lambda: fr.f_back.f_locals['meth'],
+        lambda: fr.f_back.f_locals['f'],
     ):
         try:
             func = get()

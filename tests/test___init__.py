@@ -76,6 +76,45 @@ class TestStore:
         # second call returns same thing and doesn't actually call function again
         assert func(1) == 1
 
+    def test_object(self):
+        storage_dir = tempfile.mkdtemp()
+        function_called = False
+
+        class C(object):
+            @store(storage_directory=storage_dir)
+            def f(self, x):
+                nonlocal function_called
+                assert not function_called
+                function_called = True
+                return x
+
+        c = C()
+        assert c.f(1) == 1
+        assert os.path.isfile(os.path.join(storage_dir, 'test___init__.C.f', 'x=1.pkl'))
+        # second call returns same thing and doesn't actually call function again
+        assert c.f(1) == 1
+
+    def test_object_custom_repr(self):
+        storage_dir = tempfile.mkdtemp()
+        function_called = False
+
+        class C(object):
+            @store(storage_directory=storage_dir)
+            def f(self, x):
+                nonlocal function_called
+                assert not function_called
+                function_called = True
+                return x
+
+            def __repr__(self):
+                return "custom_repr"
+
+        c = C()
+        assert c.f(1) == 1
+        assert os.path.isfile(os.path.join(storage_dir, 'test___init__.C(custom_repr).f', 'x=1.pkl'))
+        # second call returns same thing and doesn't actually call function again
+        assert c.f(1) == 1
+
     def test_storage_configuration(self):
         function_called = False
 
