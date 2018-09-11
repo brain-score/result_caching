@@ -80,7 +80,7 @@ class _DiskStorage(_Storage):
     def configure_storagedir(cls, directory, module=None):
         caller = get_calling_function()
         module = module or caller.__module__
-        print(module)
+        # print(module)
         cls.configured_storage[module] = directory
 
     def __init__(self, storage_directory=None, identifier_ignore=()):
