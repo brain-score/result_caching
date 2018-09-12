@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from caching import store_xarray, store, cache
+from result_caching import store_xarray, store, cache
 
 
 class TestXarrayStore:

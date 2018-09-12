@@ -1,11 +1,16 @@
-# Caching
+# Result Caching
 Stores function results so that they are not computed again on repetitive calls of the function with the same arguments.
 Results can be stored either on disk or in memory.
 
 
+## Quick setup
+```
+pip install git+https://github.com/mschrimpf/result_caching
+```
+
 ## Usage example
 ```
-from caching import store
+from result_caching import store
 
 @store()
 def f(a, b):

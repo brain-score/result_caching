@@ -16,13 +16,13 @@ test_requirements = [
 ]
 
 setup(
-    name='caching',
+    name='result_caching',
     version='0.1.0',
     description="Cache results for re-use",
     long_description=readme,
     author="Martin Schrimpf",
     author_email='martin.schrimpf@outlook.com',
-    url='https://github.com/mschrimpf/caching',
+    url='https://github.com/mschrimpf/result_caching',
     packages=find_packages(exclude=['tests']),
     install_requires=requirements,
     license="MIT license",
@@ -40,6 +40,8 @@ setup(
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
     ],
     test_suite='tests',
     tests_require=test_requirements
