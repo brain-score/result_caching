@@ -20,3 +20,8 @@ y = f(1, 2)  # computed first time, stored on disk
 y = f(1, 2)  # not computed again, loaded from disk
 y = f(1, 3)  # computed again, different parameters
 ```
+
+By default, results will be stored in `~/.result_caching`, this can be
+changed through the environment variable `RESULTCACHING_HOME`.
+
+`cache` will only hold results in memory and not write them to disk.

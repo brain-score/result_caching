@@ -74,15 +74,9 @@ class _Storage(object):
 
 
 class _DiskStorage(_Storage):
-    _configured_storage = os.path.expanduser("~/.result_caching")
-
-    @classmethod
-    def configure_storagedir(cls, directory):
-        cls._configured_storage = directory
-
-    def __init__(self, storage_directory=None, identifier_ignore=()):
+    def __init__(self, identifier_ignore=()):
         super().__init__(identifier_ignore=identifier_ignore)
-        self._storage_directory = storage_directory or self._configured_storage
+        self._storage_directory = os.path.expanduser(os.getenv('RESULTCACHING_HOME', '~/.result_caching'))
 
     def storage_path(self, function_identifier):
         return os.path.join(self._storage_directory, function_identifier + '.pkl')
