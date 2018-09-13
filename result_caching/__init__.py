@@ -74,32 +74,18 @@ class _Storage(object):
 
 
 class _DiskStorage(_Storage):
-    configured_storage = {}
+    _configured_storage = os.path.expanduser("~/.result_caching")
 
     @classmethod
-    def configure_storagedir(cls, directory, module=None):
-        caller = get_calling_function()
-        module = module or caller.__module__
-        # print(module)
-        cls.configured_storage[module] = directory
+    def configure_storagedir(cls, directory):
+        cls._configured_storage = directory
 
     def __init__(self, storage_directory=None, identifier_ignore=()):
         super().__init__(identifier_ignore=identifier_ignore)
-        self._set_storage_directory = storage_directory is not None
-        self._storage_directory = storage_directory or os.path.expanduser("~/.result_caching")
-
-    def _get_storage_directory(self):
-        if not self._set_storage_directory:
-            # storage dir was not set explicitly, let's see if it was configured.
-            # if not, we can still use the default.
-            caller = get_calling_function()
-            calling_module = caller.__module__
-            if calling_module in self.configured_storage:
-                return self.configured_storage[calling_module]
-        return self._storage_directory
+        self._storage_directory = storage_directory or self._configured_storage
 
     def storage_path(self, function_identifier):
-        return os.path.join(self._get_storage_directory(), function_identifier + '.pkl')
+        return os.path.join(self._storage_directory, function_identifier + '.pkl')
 
     def save(self, result, function_identifier):
         path = self.storage_path(function_identifier)
