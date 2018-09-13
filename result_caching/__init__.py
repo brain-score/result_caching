@@ -86,7 +86,7 @@ class _DiskStorage(_Storage):
     def __init__(self, storage_directory=None, identifier_ignore=()):
         super().__init__(identifier_ignore=identifier_ignore)
         self._set_storage_directory = storage_directory is not None
-        self._storage_directory = storage_directory or os.path.expanduser("~/.caching")
+        self._storage_directory = storage_directory or os.path.expanduser("~/.result_caching")
 
     def _get_storage_directory(self):
         if not self._set_storage_directory:
