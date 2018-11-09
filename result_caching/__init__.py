@@ -92,7 +92,7 @@ class _DiskStorage(_Storage):
 
     def save_file(self, result, savepath_part):
         with open(savepath_part, 'wb') as f:
-            pickle.dump({'data': result}, f)
+            pickle.dump({'data': result}, f, protocol=4)
 
     def is_stored(self, function_identifier):
         storage_path = self.storage_path(function_identifier)
@@ -142,7 +142,7 @@ class _XarrayStorage(_DiskStorage):
             function_identifier = self.get_function_identifier(function, call_args)
             stored_result, reduced_call_args = None, call_args
             if self.is_stored(function_identifier):
-                self._logger.debug("Loading from storage: {}".format(function_identifier))
+                self._logger.debug(f"Loading from storage: {function_identifier}")
                 stored_result = self.load(function_identifier)
                 missing_call_args = self.filter_coords(infile_call_args, stored_result) if not self._sub_fields \
                     else self.filter_coords(infile_call_args, getattr(stored_result, next(iter(vars(stored_result)))))
@@ -157,7 +157,7 @@ class _XarrayStorage(_DiskStorage):
                     missing_call_args = {self._combine_fields_inverse[key]: self._map_field_values_inverse(key, value)
                                          for key, value in missing_call_args.items()}
                     reduced_call_args = {**non_variable_call_args, **missing_call_args}
-                    self._logger.debug("Computing missing: {}".format(reduced_call_args))
+                    self._logger.debug(f"Computing missing: {reduced_call_args}")
             if reduced_call_args:
                 # run function if some args are uncomputed
                 result = function(**reduced_call_args)
