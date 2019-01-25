@@ -5,7 +5,69 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from result_caching import store_xarray, store, cache
+from result_caching import store_xarray, store, cache, store_dict
+
+
+class TestDictStore:
+    def test_same(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+            function_called = False
+
+            @store_dict(identifier_ignore=['x'], dict_key='x')
+            def func(x):
+                nonlocal function_called
+                assert not function_called
+                function_called = True
+                return {_x: _x for _x in x}
+
+            def test():
+                result = func([1])
+                assert isinstance(result, dict)
+                assert result[1] == 1
+
+            test()
+            # second call returns same thing and doesn't actually call function again
+            test()
+
+    def test_complimentary(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+
+            @store_dict(identifier_ignore=['x'], dict_key='x')
+            def func(x):
+                return {_x: _x for _x in x}
+
+            assert func([1]) == {1: 1}
+            assert func([2]) == {2: 2}
+
+    def test_missing_coord(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+
+            @store_dict(identifier_ignore=['x'], dict_key='x')
+            def func(x):
+                return {}
+
+            with pytest.raises(ValueError):
+                func([1])
+
+    def test_combined(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+
+            expected_x = None
+
+            @store_dict(identifier_ignore=['x'], dict_key='x')
+            def func(x):
+                assert len(x) == 1 and x[0] == expected_x
+                return {_x: _x for _x in x}
+
+            expected_x = 1
+            assert func([1]) == {1: 1}
+            expected_x = 2
+            combined = func([1, 2])
+            assert combined == {1: 1, 2: 2}
 
 
 class TestXarrayStore:
