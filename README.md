@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/mschrimpf/result_caching.svg?branch=master)](https://travis-ci.org/mschrimpf/result_caching)
+
 # Result Caching
 Stores function results so that they are not computed again on repetitive calls of the function with the same arguments.
 Results can be stored either on disk or in memory.
