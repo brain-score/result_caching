@@ -9,6 +9,7 @@ with open('README.md') as readme_file:
 requirements = [
     "numpy",
     "xarray",
+    "dask[array]",  # for `to_netcdf`
 ]
 
 test_requirements = [

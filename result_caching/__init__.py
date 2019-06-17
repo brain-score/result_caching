@@ -44,6 +44,7 @@ class _Storage(object):
             if self.is_stored(function_identifier):
                 self._logger.debug("Loading from storage: {}".format(function_identifier))
                 return self.load(function_identifier)
+            self._logger.debug("Running function: {}".format(function_identifier))
             result = function(*args, **kwargs)
             self._logger.debug("Saving to storage: {}".format(function_identifier))
             self.save(result, function_identifier)
@@ -92,7 +93,7 @@ class _DiskStorage(_Storage):
 
     def save_file(self, result, savepath_part):
         with open(savepath_part, 'wb') as f:
-            pickle.dump({'data': result}, f, protocol=4)
+            pickle.dump({'data': result}, f, protocol=-1)  # highest protocol
 
     def is_stored(self, function_identifier):
         storage_path = self.storage_path(function_identifier)
@@ -106,6 +107,45 @@ class _DiskStorage(_Storage):
     def load_file(self, path):
         with open(path, 'rb') as f:
             return pickle.load(f)['data']
+
+
+class _NetcdfStorage(_DiskStorage):
+    def storage_path(self, function_identifier):
+        return os.path.join(self._storage_directory, function_identifier + '.nc')
+
+    def save_file(self, result, savepath_part):
+        result_coords = [coord for coord, values in self.walk_coords(result)]
+        result = result.reset_index(result.indexes.keys())
+        # for some reason, the above operation suffixes single-index coordinates with _
+        coords = {}
+        for coord, values in self.walk_coords(result):
+            if coord not in result_coords:
+                assert coord.endswith('_') and coord[:-1] in result_coords
+                coord = coord[:-1]
+            coords[coord] = values
+        result = type(result)(result.values, coords=coords, dims=result.dims)
+        result.to_netcdf(savepath_part)
+
+    def load_file(self, path):
+        return xr.open_dataarray(path)
+
+    @classmethod
+    def walk_coords(cls, assembly):
+        """
+        walks through coords and all levels, just like the `__repr__` function, yielding `(name, dims, values)`.
+        """
+        coords = {}
+
+        for name, values in assembly.coords.items():
+            # partly borrowed from xarray.core.formatting#summarize_coord
+            is_index = name in assembly.dims
+            if is_index and values.variable.level_names:
+                for level in values.variable.level_names:
+                    level_values = assembly.coords[level]
+                    yield level, (level_values.dims, level_values.values)
+            else:
+                yield name, (values.dims, values.values)
+        return coords
 
 
 class _DictStorage(_DiskStorage):
@@ -143,6 +183,7 @@ class _DictStorage(_DiskStorage):
                     self._logger.debug(f"Computing missing: {reduced_call_args}")
             if reduced_call_args:
                 # run function if some args are uncomputed
+                self._logger.debug(f"Running function: {function_identifier}")
                 result = function(**reduced_call_args)
                 if not self.callargs_present(result, {self._dict_key: reduced_call_args[self._dict_key]}):
                     raise ValueError("result does not contain requested keys")
@@ -226,6 +267,7 @@ class _XarrayStorage(_DiskStorage):
                     reduced_call_args = {**non_variable_call_args, **missing_call_args}
                     self._logger.debug(f"Computing missing: {reduced_call_args}")
             if reduced_call_args:
+                self._logger.debug(f"Running function: {function_identifier}")
                 # run function if some args are uncomputed
                 result = function(**reduced_call_args)
                 if stored_result is not None:
@@ -378,3 +420,4 @@ cache = _MemoryStorage
 store = _DiskStorage
 store_dict = _DictStorage
 store_xarray = _XarrayStorage
+store_netcdf = _NetcdfStorage
