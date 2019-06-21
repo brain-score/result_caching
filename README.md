@@ -27,3 +27,9 @@ By default, results will be stored in `~/.result_caching`, this can be
 changed through the environment variable `RESULTCACHING_HOME`.
 
 `cache` will only hold results in memory and not write them to disk.
+
+## Environment variables
+| Variable | description |
+|-----------------------|----------------------------------------------------------------------------------|
+| RESULTCACHING_HOME | directory to cache results (benchmark ceilings) in, `~/.result_caching` by default |
+| RESULTCACHING_DISABLE | `'1'` to disable loading and saving of results, functions will be called directly |

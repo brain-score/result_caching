@@ -27,6 +27,10 @@ def get_function_identifier(function, call_args):
     return function_identifier
 
 
+def is_enabled():
+    return os.getenv('RESULTCACHING_DISABLE', '0') != '1'
+
+
 class _Storage(object):
     def __init__(self, identifier_ignore=()):
         """
@@ -41,13 +45,14 @@ class _Storage(object):
         def wrapper(*args, **kwargs):
             call_args = self.getcallargs(function, *args, **kwargs)
             function_identifier = self.get_function_identifier(function, call_args)
-            if self.is_stored(function_identifier):
+            if is_enabled() and self.is_stored(function_identifier):
                 self._logger.debug("Loading from storage: {}".format(function_identifier))
                 return self.load(function_identifier)
             self._logger.debug("Running function: {}".format(function_identifier))
             result = function(*args, **kwargs)
-            self._logger.debug("Saving to storage: {}".format(function_identifier))
-            self.save(result, function_identifier)
+            if is_enabled():
+                self._logger.debug("Saving to storage: {}".format(function_identifier))
+                self.save(result, function_identifier)
             return result
 
         return wrapper

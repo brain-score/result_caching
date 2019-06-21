@@ -196,6 +196,25 @@ class TestStore:
             # second call returns same thing and doesn't actually call function again
             assert c.f(1) == 1
 
+    def test_disable_store(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+            os.environ['RESULTCACHING_DISABLE'] = '1'
+
+            function_calls = 0
+
+            @store()
+            def func(x):
+                nonlocal function_calls
+                function_calls += 1
+                return x
+
+            assert func(1) == 1
+            assert function_calls == 1
+            assert not os.listdir(storage_dir)
+            assert func(1) == 1
+            assert function_calls == 2
+
 
 class TestCache:
     def test(self):
