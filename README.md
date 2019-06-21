@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/mschrimpf/result_caching.svg?branch=master)](https://travis-ci.org/mschrimpf/result_caching)
+[![Build Status](https://travis-ci.org/brain-score/result_caching.svg?branch=master)](https://travis-ci.org/brain-score/result_caching)
 
 # Result Caching
 Stores function results so that they are not computed again on repetitive calls of the function with the same arguments.
