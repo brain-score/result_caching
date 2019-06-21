@@ -197,6 +197,7 @@ class TestStore:
             assert c.f(1) == 1
 
     def test_disable_store(self):
+        previous_disable_value = os.getenv('RESULTCACHING_DISABLE', '0')
         with tempfile.TemporaryDirectory() as storage_dir:
             os.environ['RESULTCACHING_HOME'] = storage_dir
             os.environ['RESULTCACHING_DISABLE'] = '1'
@@ -214,6 +215,8 @@ class TestStore:
             assert not os.listdir(storage_dir)
             assert func(1) == 1
             assert function_calls == 2
+
+        os.environ['RESULTCACHING_DISABLE'] = previous_disable_value
 
 
 class TestCache:
