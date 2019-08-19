@@ -24,7 +24,10 @@ def get_function_identifier(function, call_args):
     module = '.'.join(module)
     strip_slashes = lambda x: str(x).replace('/', '_')
     params = ','.join(f'{key}={strip_slashes(value)}' for key, value in call_args.items())
-    function_identifier = os.path.join(module, params)
+    if params:
+        function_identifier = os.path.join(module, params)
+    else:
+        function_identifier = module
     return function_identifier
 
 
