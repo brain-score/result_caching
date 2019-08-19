@@ -22,7 +22,8 @@ def get_function_identifier(function, call_args):
         module.insert(1, object)
         del call_args['self']
     module = '.'.join(module)
-    params = ','.join('{}={}'.format(key, value) for key, value in call_args.items())
+    strip_slashes = lambda x: str(x).replace('/', '_')
+    params = ','.join(f'{key}={strip_slashes(value)}' for key, value in call_args.items())
     function_identifier = os.path.join(module, params)
     return function_identifier
 
@@ -304,7 +305,8 @@ class _XarrayStorage(_DiskStorage):
     def ensure_callargs_present(self, result, infile_call_args):
         # make sure coords are set equal to call_args
         if not self._sub_fields:
-            assert len(self.filter_coords(infile_call_args, result)) == 0
+            assert len(self.filter_coords(infile_call_args, result)) == 0, \
+                f"{self.filter_coords(infile_call_args, result)} not present in result"
         else:
             for field in vars(result):
                 assert len(self.filter_coords(infile_call_args, getattr(result, field))) == 0
