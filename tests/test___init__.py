@@ -5,7 +5,21 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from result_caching import store_xarray, store, cache, store_dict
+from result_caching import store_xarray, store, cache, store_dict, get_function_identifier
+
+
+class TestFunctionIdentifier:
+    def test_noargs(self):
+        identifier = get_function_identifier(TestFunctionIdentifier.test_noargs, dict())
+        assert identifier == 'test___init__.test_noargs/'
+
+    def test_two_ints(self):
+        identifier = get_function_identifier(TestFunctionIdentifier.test_two_ints, dict(a=1, b=2))
+        assert identifier == 'test___init__.test_two_ints/a=1,b=2'
+
+    def test_slashes(self):
+        identifier = get_function_identifier(TestFunctionIdentifier.test_slashes, dict(path='/local/user/msch/hello'))
+        assert identifier == 'test___init__.test_slashes/path=_local_user_msch_hello'
 
 
 class TestDictStore:
