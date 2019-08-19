@@ -11,7 +11,7 @@ from result_caching import store_xarray, store, cache, store_dict, get_function_
 class TestFunctionIdentifier:
     def test_noargs(self):
         identifier = get_function_identifier(TestFunctionIdentifier.test_noargs, dict())
-        assert identifier == 'test___init__.test_noargs/'
+        assert identifier == 'test___init__.test_noargs'
 
     def test_two_ints(self):
         identifier = get_function_identifier(TestFunctionIdentifier.test_two_ints, dict(a=1, b=2))
