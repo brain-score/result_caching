@@ -363,6 +363,8 @@ class _XarrayStorage(_DiskStorage):
     def _build_sort_array(self, coord, coord_value, data):
         dims = data[coord].dims
         assert len(dims) == 1
+        if isinstance(coord_value, tuple):
+            coord_value = list(coord_value)
         s = xr.DataArray(list(range(len(coord_value))), [(coord, coord_value)])
         if dims[0] == coord:
             return s
