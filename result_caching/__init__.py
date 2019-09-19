@@ -258,7 +258,7 @@ class _XarrayStorage(_DiskStorage):
                                 if key in self._combine_fields}
             function_identifier = self.get_function_identifier(function, call_args)
             stored_result, reduced_call_args = None, call_args
-            if self.is_stored(function_identifier):
+            if is_enabled() and self.is_stored(function_identifier):
                 self._logger.debug(f"Loading from storage: {function_identifier}")
                 stored_result = self.load(function_identifier)
                 missing_call_args = self.filter_coords(infile_call_args, stored_result) if not self._sub_fields \
