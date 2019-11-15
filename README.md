@@ -32,4 +32,5 @@ changed through the environment variable `RESULTCACHING_HOME`.
 | Variable | description |
 |-----------------------|----------------------------------------------------------------------------------|
 | RESULTCACHING_HOME | directory to cache results (benchmark ceilings) in, `~/.result_caching` by default |
-| RESULTCACHING_DISABLE | `'1'` to disable loading and saving of results, functions will be called directly |
+| RESULTCACHING_DISABLE | * `'1'` to disable loading and saving of results, functions will be called directly |
+|                       | * `'module1,module2.submodule.function`' to disable loading and saving of function identifiers starting with one of the specifiers (e.g. `module1.function` will not be considered) |
