@@ -31,8 +31,14 @@ def get_function_identifier(function, call_args):
     return function_identifier
 
 
-def is_enabled():
-    return os.getenv('RESULTCACHING_DISABLE', '0') != '1'
+def is_enabled(function_identifier):
+    disable = os.getenv('RESULTCACHING_DISABLE', '0')
+    if disable == '1':
+        return False
+    if disable == '':
+        return True
+    disabled_modules = disable.split(',')
+    return not any(function_identifier.startswith(disabled_module) for disabled_module in disabled_modules)
 
 
 class _Storage(object):
@@ -49,12 +55,12 @@ class _Storage(object):
         def wrapper(*args, **kwargs):
             call_args = self.getcallargs(function, *args, **kwargs)
             function_identifier = self.get_function_identifier(function, call_args)
-            if is_enabled() and self.is_stored(function_identifier):
+            if is_enabled(function_identifier) and self.is_stored(function_identifier):
                 self._logger.debug("Loading from storage: {}".format(function_identifier))
                 return self.load(function_identifier)
             self._logger.debug("Running function: {}".format(function_identifier))
             result = function(*args, **kwargs)
-            if is_enabled():
+            if is_enabled(function_identifier):
                 self._logger.debug("Saving to storage: {}".format(function_identifier))
                 self.save(result, function_identifier)
             return result
@@ -258,7 +264,7 @@ class _XarrayStorage(_DiskStorage):
                                 if key in self._combine_fields}
             function_identifier = self.get_function_identifier(function, call_args)
             stored_result, reduced_call_args = None, call_args
-            if is_enabled() and self.is_stored(function_identifier):
+            if is_enabled(function_identifier) and self.is_stored(function_identifier):
                 self._logger.debug(f"Loading from storage: {function_identifier}")
                 stored_result = self.load(function_identifier)
                 missing_call_args = self.filter_coords(infile_call_args, stored_result) if not self._sub_fields \

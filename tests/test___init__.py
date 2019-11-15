@@ -1,5 +1,6 @@
 import os
 import tempfile
+from collections import defaultdict
 
 import numpy as np
 import pytest
@@ -210,8 +211,8 @@ class TestStore:
             # second call returns same thing and doesn't actually call function again
             assert c.f(1) == 1
 
-    def test_disable_store(self):
-        previous_disable_value = os.getenv('RESULTCACHING_DISABLE', '0')
+    def test_disable_all(self):
+        previous_disable_value = os.getenv('RESULTCACHING_DISABLE', '')
         with tempfile.TemporaryDirectory() as storage_dir:
             os.environ['RESULTCACHING_HOME'] = storage_dir
             os.environ['RESULTCACHING_DISABLE'] = '1'
@@ -229,6 +230,69 @@ class TestStore:
             assert not os.listdir(storage_dir)
             assert func(1) == 1
             assert function_calls == 2
+
+        os.environ['RESULTCACHING_DISABLE'] = previous_disable_value
+
+    def test_disable_specific(self):
+        previous_disable_value = os.getenv('RESULTCACHING_DISABLE', '')
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+            os.environ['RESULTCACHING_DISABLE'] = 'test___init__.func1'
+
+            function_calls = defaultdict(lambda: 0)
+
+            @store()
+            def func1(x):
+                nonlocal function_calls
+                function_calls[1] += 1
+                return x
+
+            @store()
+            def func2(x):
+                nonlocal function_calls
+                function_calls[2] += 1
+                return x
+
+            assert func1(1) == 1
+            assert function_calls[1] == 1
+            assert not os.listdir(storage_dir)
+            assert func1(1) == 1
+            assert function_calls[1] == 2
+
+            assert func2(1) == 1
+            assert function_calls[2] == 1
+            assert func2(1) == 1
+            assert function_calls[2] == 1
+
+        os.environ['RESULTCACHING_DISABLE'] = previous_disable_value
+
+    def test_disable_module(self):
+        previous_disable_value = os.getenv('RESULTCACHING_DISABLE', '')
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+            os.environ['RESULTCACHING_DISABLE'] = 'test___init__'
+
+            function_calls = defaultdict(lambda: 0)
+
+            @store()
+            def func1(x):
+                nonlocal function_calls
+                function_calls[1] += 1
+                return x
+
+            @store()
+            def func2(x):
+                nonlocal function_calls
+                function_calls[2] += 1
+                return x
+
+            assert func1(1) == 1
+            assert func1(1) == 1
+            assert function_calls[1] == 2
+            assert func2(1) == 1
+            assert func2(1) == 1
+            assert function_calls[2] == 2
+            assert not os.listdir(storage_dir)
 
         os.environ['RESULTCACHING_DISABLE'] = previous_disable_value
 
