@@ -182,7 +182,7 @@ class _DictStorage(_DiskStorage):
             infile_call_args = {self._dict_key: call_args[self._dict_key]}
             function_identifier = self.get_function_identifier(function, call_args)
             stored_result, reduced_call_args = None, call_args
-            if self.is_stored(function_identifier):
+            if is_enabled(function_identifier) and self.is_stored(function_identifier):
                 self._logger.debug(f"Loading from storage: {function_identifier}")
                 stored_result = self.load(function_identifier)
                 infile_missing_call_args = self.missing_call_args(infile_call_args, stored_result)
@@ -205,8 +205,9 @@ class _DictStorage(_DiskStorage):
                 if stored_result is not None:
                     result = self.merge_results(stored_result, result)
                 # only save if new results
-                self._logger.debug("Saving to storage: {}".format(function_identifier))
-                self.save(result, function_identifier)
+                if is_enabled(function_identifier):
+                    self._logger.debug("Saving to storage: {}".format(function_identifier))
+                    self.save(result, function_identifier)
             assert self.callargs_present(result, infile_call_args)
             result = self.filter_callargs(result, infile_call_args)
             return result
@@ -288,8 +289,9 @@ class _XarrayStorage(_DiskStorage):
                 if stored_result is not None:
                     result = self.merge_results(stored_result, result)
                 # only save if new results
-                self._logger.debug("Saving to storage: {}".format(function_identifier))
-                self.save(result, function_identifier)
+                if is_enabled(function_identifier):
+                    self._logger.debug("Saving to storage: {}".format(function_identifier))
+                    self.save(result, function_identifier)
             self.ensure_callargs_present(result, infile_call_args)
             result = self.filter_callargs(result, infile_call_args)
             return result
