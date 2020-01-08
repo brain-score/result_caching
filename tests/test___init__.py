@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from result_caching import store_xarray, store, cache, store_dict, get_function_identifier
+from result_caching import store_xarray, store, cache, store_dict, get_function_identifier, NotCachedError
 
 
 class TestFunctionIdentifier:
@@ -295,6 +295,35 @@ class TestStore:
             assert not os.listdir(storage_dir)
 
         os.environ['RESULTCACHING_DISABLE'] = previous_disable_value
+
+    def test_cachedonly_specific(self):
+        previous_cached_value = os.getenv('RESULTCACHING_CACHEDONLY', '')
+        with tempfile.TemporaryDirectory() as storage_dir:
+            os.environ['RESULTCACHING_HOME'] = storage_dir
+
+            @store()
+            def func1(x):
+                return x
+
+            @store()
+            def func2(x):
+                return x
+
+            # when allowing only cached results from func2, func1 should work, but func2 should err
+            os.environ['RESULTCACHING_CACHEDONLY'] = 'test___init__.func2'
+            assert func1(1) == 1
+            with pytest.raises(NotCachedError):
+                func2(2)
+
+            # when allow reruns, func2 should work again
+            os.environ['RESULTCACHING_CACHEDONLY'] = ''
+            assert func2(2) == 2
+
+            # when now only allowing cached results again, func2 should work because results are already cached
+            os.environ['RESULTCACHING_CACHEDONLY'] = 'test___init__.func2'
+            assert func2(2) == 2
+
+        os.environ['RESULTCACHING_CACHEDONLY'] = previous_cached_value
 
 
 class TestCache:

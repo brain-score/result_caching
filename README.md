@@ -34,3 +34,4 @@ changed through the environment variable `RESULTCACHING_HOME`.
 | RESULTCACHING_HOME | directory to cache results (benchmark ceilings) in, `~/.result_caching` by default |
 | RESULTCACHING_DISABLE | * `'1'` to disable loading and saving of results, functions will be called directly |
 |                       | * `'candidate_models.score_model,model_tools.activations`' to disable loading and saving of function identifiers starting with one of the specifiers separated by a comma (e.g. any package or function inside `model_tools.activations` will not be considered) |
+| RESULTCACHING_CACHEDONLY | If enabled, raises an error when trying to run a function that does not have its result already cached (follows the same matching rules as `RESULTCACHING_DISABLE`) |
