@@ -33,12 +33,25 @@ def get_function_identifier(function, call_args):
 
 def is_enabled(function_identifier):
     disable = os.getenv('RESULTCACHING_DISABLE', '0')
-    if disable == '1':
-        return False
-    if disable == '':
+    return not _match_identifier(function_identifier, disable)
+
+
+def cached_only(function_identifier):
+    cachedonly = os.getenv('RESULTCACHING_CACHEDONLY', '0')
+    return _match_identifier(function_identifier, cachedonly)
+
+
+def _match_identifier(function_identifier, match_value):
+    if match_value == '1':
         return True
-    disabled_modules = disable.split(',')
-    return not any(function_identifier.startswith(disabled_module) for disabled_module in disabled_modules)
+    if match_value == '':
+        return False
+    disabled_modules = match_value.split(',')
+    return any(function_identifier.startswith(disabled_module) for disabled_module in disabled_modules)
+
+
+class NotCachedError(Exception):
+    pass
 
 
 class _Storage(object):
@@ -58,6 +71,8 @@ class _Storage(object):
             if is_enabled(function_identifier) and self.is_stored(function_identifier):
                 self._logger.debug("Loading from storage: {}".format(function_identifier))
                 return self.load(function_identifier)
+            if cached_only(function_identifier):
+                raise NotCachedError(f"No result stored for '{function_identifier}'")
             self._logger.debug("Running function: {}".format(function_identifier))
             result = function(*args, **kwargs)
             if is_enabled(function_identifier):
@@ -197,6 +212,9 @@ class _DictStorage(_DiskStorage):
                     reduced_call_args = {**non_variable_call_args, **infile_missing_call_args}
                     self._logger.debug(f"Computing missing: {reduced_call_args}")
             if reduced_call_args:
+                if cached_only(function_identifier):
+                    raise NotCachedError(f"The following arguments for '{function_identifier}' "
+                                         f"are not stored: {reduced_call_args}")
                 # run function if some args are uncomputed
                 self._logger.debug(f"Running function: {function_identifier}")
                 result = function(**reduced_call_args)
@@ -283,6 +301,9 @@ class _XarrayStorage(_DiskStorage):
                     reduced_call_args = {**non_variable_call_args, **missing_call_args}
                     self._logger.debug(f"Computing missing: {reduced_call_args}")
             if reduced_call_args:
+                if cached_only(function_identifier):
+                    raise NotCachedError(f"The following arguments for '{function_identifier}' "
+                                         f"are not stored: {reduced_call_args}")
                 self._logger.debug(f"Running function: {function_identifier}")
                 # run function if some args are uncomputed
                 result = function(**reduced_call_args)
