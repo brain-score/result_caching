@@ -1,13 +1,14 @@
+from collections import defaultdict, OrderedDict
+
 import inspect
 import itertools
 import logging
+import numpy as np
 import os
 import pickle
-from collections import defaultdict, OrderedDict
-from typing import Union
-
-import numpy as np
 import xarray as xr
+from functools import wraps
+from typing import Union
 
 
 def get_function_identifier(function, call_args):
@@ -65,6 +66,7 @@ class _Storage(object):
         self._logger = logging.getLogger(_fullname(self))
 
     def __call__(self, function):
+        @wraps(function)
         def wrapper(*args, **kwargs):
             call_args = self.getcallargs(function, *args, **kwargs)
             function_identifier = self.get_function_identifier(function, call_args)
