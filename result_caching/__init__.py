@@ -4,7 +4,6 @@ import inspect
 import itertools
 import logging
 import numpy as np
-import pandas as pd
 import os
 import pickle
 import xarray as xr
@@ -139,11 +138,8 @@ class _DiskStorage(_Storage):
 
     def load_file(self, path):
         with open(path, 'rb') as f:
-            try:
-                data = pickle.load(f)['data']
-            catch:
-                data = pd.read_pickle(f)['data']
-            return data
+            return pickle.load(f)['data']
+
 
 class _NetcdfStorage(_DiskStorage):
     def storage_path(self, function_identifier):
