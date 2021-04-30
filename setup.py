@@ -7,7 +7,7 @@ with open('README.md') as readme_file:
     readme = readme_file.read()
 
 requirements = [
-    "numpy",
+    "numpy>=1.17",
     "xarray",
     "dask[array]",  # for `to_netcdf`
 ]
