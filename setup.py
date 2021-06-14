@@ -23,7 +23,10 @@ setup(
     long_description=readme,
     author="Martin Schrimpf",
     author_email='martin.schrimpf@outlook.com',
-    url='https://github.com/mschrimpf/result_caching',
+    #url='https://github.com/mschrimpf/result_caching',
+
+    # above URL creates organization dependency errors:
+    url='https://github.com/brain-score/result_caching.git',
     packages=find_packages(exclude=['tests']),
     install_requires=requirements,
     license="MIT license",
