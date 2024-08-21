@@ -1,0 +1,11 @@
+name: result_caching
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11.9
+  - numpy=1.26.4
+  - xarray=2022.3.0
+  - dask=2024.5.1
+  - pip:
+      - pytest==8.2.1
