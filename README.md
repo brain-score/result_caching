@@ -1,5 +1,4 @@
-[![Build Status](https://travis-ci.org/brain-score/result_caching.svg?branch=master)](https://travis-ci.org/brain-score/result_caching)
-
+[![Build Status](http://brain-score-jenkins.com:8080/buildStatus/icon?job=job%2Fresult_caching%2Fjob%2Fresult_caching_daily_test)](http://brain-score-jenkins.com:8080/buildStatus/icon?job=job%2Fresult_caching%2Fjob%2Fresult_caching_daily_test)
 # Result Caching
 Stores function results so that they are not computed again on repetitive calls of the function with the same arguments.
 Results can be stored either on disk or in memory.
