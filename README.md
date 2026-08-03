@@ -27,7 +27,7 @@ changed through the environment variable `RESULTCACHING_HOME`.
 
 `cache` will only hold results in memory and not write them to disk.
 
-## Environment variables
+## Environment variables 
 | Variable | description |
 |-----------------------|----------------------------------------------------------------------------------|
 | RESULTCACHING_HOME | directory to cache results (benchmark ceilings) in, `~/.result_caching` by default |
