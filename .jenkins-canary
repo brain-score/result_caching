@@ -1,2 +1,3 @@
 This file triggers the Jenkins Pipeline migration canary.
 It is not part of the Python package.
+This update triggers the canonical Pipeline canary.
