@@ -218,6 +218,42 @@ class TestSizeCap:
         compute(identifier='alexnet', layers=['fc'])
         assert calls['n'] == 2, "nothing was cached, so this recomputes"
 
+    def test_routes_through_plain_store_xarray_too(self, s3):
+        """The extractor is decorated with store_xarray, not an S3-specific
+        class, so setting a bucket must be enough to reach S3. This is the
+        integration gap that isolated unit tests missed."""
+        from result_caching import store_xarray
+        calls = {'n': 0}
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            calls['n'] += 1
+            return _assembly()
+
+        compute(identifier='alexnet', layers=['fc'])
+        assert [k for k in s3.upload_calls if k.endswith('.nc')], \
+            "store_xarray must reach S3 when a bucket is configured"
+        compute(identifier='alexnet', layers=['fc'])
+        assert calls['n'] == 1, "second call must hit the S3 cache"
+
+    def test_no_bucket_keeps_local_disk(self, tmp_path, monkeypatch):
+        """Local developers must be unaffected: no bucket, no S3."""
+        monkeypatch.setenv('RESULTCACHING_HOME', str(tmp_path))
+        monkeypatch.delenv('RESULTCACHING_S3_BUCKET', raising=False)
+        monkeypatch.delenv('RESULTCACHING_DISABLE', raising=False)
+        from result_caching import store_xarray
+        calls = {'n': 0}
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            calls['n'] += 1
+            return _assembly()
+
+        compute(identifier='alexnet', layers=['fc'])
+        compute(identifier='alexnet', layers=['fc'])
+        assert calls['n'] == 1
+        assert any(p.suffix == '.pkl' for p in tmp_path.rglob('*') if p.is_file())
+
     def test_cap_default_is_finite_and_generous(self, s3):
         compute, _ = _counting_fn()
         compute(identifier='alexnet', layers=['fc'])

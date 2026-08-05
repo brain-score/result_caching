@@ -176,12 +176,46 @@ def _netcdf_save(result, savepath):
             assert coord.endswith('_') and coord[:-1] in result_coords
             coord = coord[:-1]
         coords[coord] = values
-    result = type(result)(result.values, coords=coords, dims=result.dims)
+    # Rebuild as a plain DataArray, NOT type(result): brainio's DataAssembly
+    # subclasses re-derive a MultiIndex from same-dim coords in __init__, which
+    # would undo the flattening we just did and make to_netcdf raise
+    # NotImplementedError. The subclass is recorded in the manifest and restored
+    # on load instead.
+    result = xr.DataArray(result.values, coords=coords, dims=result.dims)
     result.to_netcdf(savepath)
 
 
-def _netcdf_load(path):
-    return xr.open_dataarray(path)
+def _netcdf_load(path, target_class=None):
+    """Read a netCDF cache entry, restoring the original assembly class.
+
+    Written as a plain DataArray with flat coords; the recorded subclass
+    re-derives its MultiIndex from those coords on construction, so callers get
+    back the type they stored.
+    """
+    loaded = xr.open_dataarray(path)
+    if target_class is None:
+        return loaded
+    loaded.load()  # detach from the file before it is deleted or reused
+    return target_class(loaded)
+
+
+def _describe_class(result):
+    cls = type(result)
+    return {'module': cls.__module__, 'name': cls.__qualname__}
+
+
+def _resolve_class(described):
+    """Import a class recorded by _describe_class, or None if unavailable."""
+    if not described:
+        return None
+    try:
+        import importlib
+        module = importlib.import_module(described['module'])
+        return getattr(module, described['name'])
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not resolve cached assembly class %s", described, exc_info=True)
+        return None
 
 
 class _NetcdfStorage(_DiskStorage):
@@ -303,6 +337,37 @@ class _DictStorage(_DiskStorage):
 # or collide with an existing cache -- it simply misses and recomputes.
 # --------------------------------------------------------------------------
 
+_S3_BUCKET_VAR = 'RESULTCACHING_S3_BUCKET'
+_S3_PREFIX_VAR = 'RESULTCACHING_S3_PREFIX'
+_S3_EPOCH_VAR = 'RESULTCACHING_S3_EPOCH'
+_S3_MAX_GB_VAR = 'RESULTCACHING_S3_MAX_GB'
+
+# Refuse to write anything larger than this. The activation-size distribution
+# has a long tail (one vision model projects to 146 GB against a p90 of 31 GB),
+# and that tail is most of the storage bill for a fraction of the benefit.
+_S3_DEFAULT_MAX_GB = 50.0
+
+def s3_enabled() -> bool:
+    return bool(os.getenv(_S3_BUCKET_VAR, '').strip())
+
+
+def _s3_client():
+    """boto3 S3 client, or None when boto3 is not installed.
+
+    Optional dependency: a missing boto3 must degrade to "no cache", never
+    break an import or a run.
+    """
+    try:
+        import boto3
+    except ImportError:
+        # Only worth flagging when someone actually asked for S3 caching.
+        if s3_enabled():
+            logging.getLogger(__name__).warning(
+                "%s is set but boto3 is not installed; S3 caching is off. "
+                "Install with `pip install result_caching[s3]`.", _S3_BUCKET_VAR)
+        return None
+    return boto3.client('s3')
+
 # Bump when the on-disk layout changes in a way older readers cannot handle.
 _MANIFEST_SCHEMA_VERSION = 1
 
@@ -329,9 +394,18 @@ def _write_manifest(storage_path, result):
         'dtype': str(getattr(result, 'dtype', '')),
         'shape': list(getattr(result, 'shape', ())),
         'bytes': os.path.getsize(storage_path) if os.path.isfile(storage_path) else None,
+        'class': _describe_class(result),
     }
     with open(_manifest_path(storage_path), 'w') as f:
         json.dump(manifest, f, sort_keys=True)
+
+
+def _class_from_manifest(manifest_file):
+    try:
+        with open(manifest_file) as f:
+            return _resolve_class(json.load(f).get('class'))
+    except Exception:
+        return None
 
 
 def _manifest_is_usable(storage_path) -> bool:
@@ -514,6 +588,118 @@ class _XarrayStorage(_DiskStorage):
         return s.stack(**{dims[0]: [coord]})
 
 
+    # --- S3 backend -------------------------------------------------------
+    # Routed to from is_stored/load/save when RESULTCACHING_S3_BUCKET is set.
+    # Config is read per call rather than cached in __init__ because decoration
+    # happens at import time, long before the environment is what it will be.
+
+    def _s3_config(self):
+        try:
+            max_gb = float(os.getenv(_S3_MAX_GB_VAR, _S3_DEFAULT_MAX_GB))
+        except ValueError:
+            max_gb = _S3_DEFAULT_MAX_GB
+        return {
+            'bucket': os.getenv(_S3_BUCKET_VAR, '').strip(),
+            'prefix': os.getenv(_S3_PREFIX_VAR, 'result_caching').strip('/'),
+            'epoch': os.getenv(_S3_EPOCH_VAR, '1').strip(),
+            'max_bytes': max_gb * (1024 ** 3),
+        }
+
+    def s3_key(self, function_identifier):
+        config = self._s3_config()
+        return f"{config['prefix']}/epoch={config['epoch']}/{function_identifier}.nc"
+
+    def _s3_staging_path(self, function_identifier):
+        """Scratch path for the netCDF file in transit.
+
+        netCDF needs a real file, so bytes land on local disk on the way to or
+        from S3. Kept under RESULTCACHING_HOME so container disk budgeting does
+        not have to learn about a second location.
+        """
+        return os.path.join(self._storage_directory, '_s3_staging', function_identifier + '.nc')
+
+    def _s3_read_manifest(self, client, config, key):
+        try:
+            response = client.get_object(Bucket=config['bucket'], Key=key + '.manifest.json')
+            return json.loads(response['Body'].read())
+        except Exception:
+            # Absent manifest, no permission, malformed JSON -- all mean the
+            # entry is not usable, which is a miss.
+            return None
+
+    def _s3_is_stored(self, function_identifier):
+        client = _s3_client()
+        if client is None:
+            return False
+        config = self._s3_config()
+        key = self.s3_key(function_identifier)
+        manifest = self._s3_read_manifest(client, config, key)
+        if manifest is None:
+            return False
+        if manifest.get('schema_version') != _MANIFEST_SCHEMA_VERSION:
+            self._logger.debug("s3://%s/%s has schema_version %s, expected %s",
+                               config['bucket'], key, manifest.get('schema_version'),
+                               _MANIFEST_SCHEMA_VERSION)
+            return False
+        return True
+
+    def _s3_load(self, function_identifier):
+        client = _s3_client()
+        config = self._s3_config()
+        local_path = self._s3_staging_path(function_identifier)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        key = self.s3_key(function_identifier)
+        client.download_file(config['bucket'], key, local_path)
+        manifest = self._s3_read_manifest(client, config, key) or {}
+        # Always netCDF here, whatever RESULTCACHING_FORMAT says: a shared cache
+        # has no reason to carry the version-fragile pickle format.
+        return _netcdf_load(local_path, target_class=_resolve_class(manifest.get('class')))
+
+    def _s3_save(self, result, function_identifier):
+        client = _s3_client()
+        if client is None:
+            return
+        config = self._s3_config()
+        local_path = self._s3_staging_path(function_identifier)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        try:
+            _netcdf_save(result, local_path)
+            size = os.path.getsize(local_path)
+            if size > config['max_bytes']:
+                self._logger.info("Not caching %s: %.1f GB exceeds the %.1f GB cap (%s)",
+                                  function_identifier, size / (1024 ** 3),
+                                  config['max_bytes'] / (1024 ** 3), _S3_MAX_GB_VAR)
+                return
+            key = self.s3_key(function_identifier)
+            # Data first, manifest second: a read requires the manifest, so an
+            # interrupted write reads as a miss rather than a corrupt hit.
+            client.upload_file(local_path, config['bucket'], key)
+            client.put_object(Bucket=config['bucket'], Key=key + '.manifest.json',
+                              Body=json.dumps(self._s3_manifest(result, size, config),
+                                              sort_keys=True).encode())
+        except Exception:
+            # Caching is an optimisation; a write failure must not lose the
+            # result that was just computed.
+            self._logger.warning("Could not write %s to S3 cache", function_identifier,
+                                 exc_info=True)
+        finally:
+            if os.path.isfile(local_path):
+                os.remove(local_path)
+
+    def _s3_manifest(self, result, size, config):
+        import numpy
+        return {
+            'schema_version': _MANIFEST_SCHEMA_VERSION,
+            'packages': {'xarray': xr.__version__, 'pandas': pd.__version__,
+                         'numpy': numpy.__version__},
+            'dtype': str(getattr(result, 'dtype', '')),
+            'shape': list(getattr(result, 'shape', ())),
+            'bytes': size,
+            'epoch': config['epoch'],
+            'class': _describe_class(result),
+        }
+
+
     # --- format selection -------------------------------------------------
     # Overridden from _DiskStorage so a shared cache can use a format that
     # survives a pandas/xarray upgrade. See use_netcdf_format().
@@ -530,6 +716,8 @@ class _XarrayStorage(_DiskStorage):
         _netcdf_save(result, savepath_part)
 
     def save(self, result, function_identifier):
+        if s3_enabled():
+            return self._s3_save(result, function_identifier)
         super().save(result, function_identifier)
         if use_netcdf_format():
             # After super().save() has renamed the temp file into place, so the
@@ -539,12 +727,19 @@ class _XarrayStorage(_DiskStorage):
             except Exception:
                 logging.getLogger(__name__).debug("Could not write cache manifest", exc_info=True)
 
+    def load(self, function_identifier):
+        if s3_enabled():
+            return self._s3_load(function_identifier)
+        return super().load(function_identifier)
+
     def load_file(self, path):
         if not use_netcdf_format():
             return super().load_file(path)
-        return _netcdf_load(path)
+        return _netcdf_load(path, target_class=_class_from_manifest(_manifest_path(path)))
 
     def is_stored(self, function_identifier):
+        if s3_enabled():
+            return self._s3_is_stored(function_identifier)
         if not super().is_stored(function_identifier):
             return False
         if not use_netcdf_format():
@@ -576,159 +771,7 @@ class _XarrayStorage(_DiskStorage):
 # this module never requires it.
 # --------------------------------------------------------------------------
 
-_S3_BUCKET_VAR = 'RESULTCACHING_S3_BUCKET'
-_S3_PREFIX_VAR = 'RESULTCACHING_S3_PREFIX'
-_S3_EPOCH_VAR = 'RESULTCACHING_S3_EPOCH'
-_S3_MAX_GB_VAR = 'RESULTCACHING_S3_MAX_GB'
 
-# Refuse to write anything larger than this. The activation-size distribution
-# has a long tail (one vision model projects to 146 GB against a p90 of 31 GB),
-# and that tail is most of the storage bill for a fraction of the benefit.
-_S3_DEFAULT_MAX_GB = 50.0
-
-
-def s3_enabled() -> bool:
-    return bool(os.getenv(_S3_BUCKET_VAR, '').strip())
-
-
-def _s3_client():
-    """boto3 S3 client, or None when boto3 is not installed.
-
-    Optional dependency: a missing boto3 must degrade to "no cache", never
-    break an import or a run.
-    """
-    try:
-        import boto3
-    except ImportError:
-        # Only worth flagging when someone actually asked for S3 caching.
-        if s3_enabled():
-            logging.getLogger(__name__).warning(
-                "%s is set but boto3 is not installed; S3 caching is off. "
-                "Install with `pip install result_caching[s3]`.", _S3_BUCKET_VAR)
-        return None
-    return boto3.client('s3')
-
-
-class _S3XarrayStorage(_XarrayStorage):
-    """netCDF + manifest, stored in S3 under a versioned prefix.
-
-    Layout::
-
-        s3://<bucket>/<prefix>/epoch=<epoch>/<function_identifier>.nc
-        s3://<bucket>/<prefix>/epoch=<epoch>/<function_identifier>.nc.manifest.json
-
-    ``epoch`` is a manually bumped integer: a single switch that invalidates
-    everything at once when something breaks that the key does not model.
-
-    Atomicity comes free from the two-object layout. Individual S3 PUTs are
-    atomic, the data object is written before the manifest, and a read requires
-    the manifest -- so an interrupted write is indistinguishable from a miss and
-    is simply recomputed.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._bucket = os.getenv(_S3_BUCKET_VAR, '').strip()
-        self._prefix = os.getenv(_S3_PREFIX_VAR, 'result_caching').strip('/')
-        self._epoch = os.getenv(_S3_EPOCH_VAR, '1').strip()
-        try:
-            self._max_bytes = float(os.getenv(_S3_MAX_GB_VAR, _S3_DEFAULT_MAX_GB)) * (1024 ** 3)
-        except ValueError:
-            self._max_bytes = _S3_DEFAULT_MAX_GB * (1024 ** 3)
-
-    # --- key layout -------------------------------------------------------
-
-    def s3_key(self, function_identifier):
-        return f"{self._prefix}/epoch={self._epoch}/{function_identifier}.nc"
-
-    # --- storage protocol -------------------------------------------------
-
-    def is_stored(self, function_identifier):
-        client = _s3_client()
-        if client is None:
-            return False
-        key = self.s3_key(function_identifier)
-        manifest = self._read_manifest(client, key)
-        if manifest is None:
-            return False
-        if manifest.get('schema_version') != _MANIFEST_SCHEMA_VERSION:
-            self._logger.debug("Cache entry s3://%s/%s has schema_version %s, expected %s",
-                               self._bucket, key, manifest.get('schema_version'),
-                               _MANIFEST_SCHEMA_VERSION)
-            return False
-        return True
-
-    def load(self, function_identifier):
-        client = _s3_client()
-        key = self.s3_key(function_identifier)
-        local_path = self._local_staging_path(function_identifier)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        client.download_file(self._bucket, key, local_path)
-        # Always netCDF here, regardless of RESULTCACHING_FORMAT: a shared cache
-        # has no reason to carry the version-fragile pickle format.
-        return _netcdf_load(local_path)
-
-    def save(self, result, function_identifier):
-        client = _s3_client()
-        if client is None:
-            return
-        local_path = self._local_staging_path(function_identifier)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        try:
-            _netcdf_save(result, local_path)
-            size = os.path.getsize(local_path)
-            if size > self._max_bytes:
-                self._logger.info(
-                    "Not caching %s: %.1f GB exceeds the %.1f GB cap (%s)",
-                    function_identifier, size / (1024 ** 3),
-                    self._max_bytes / (1024 ** 3), _S3_MAX_GB_VAR)
-                return
-            key = self.s3_key(function_identifier)
-            # Data first, manifest second: a read requires the manifest, so an
-            # interrupted write reads as a miss rather than as a corrupt hit.
-            client.upload_file(local_path, self._bucket, key)
-            client.put_object(Bucket=self._bucket, Key=key + '.manifest.json',
-                              Body=json.dumps(self._manifest(result, size), sort_keys=True).encode())
-        except Exception:
-            # Caching is an optimisation; a write failure must never fail the
-            # run that produced the result.
-            self._logger.warning("Could not write %s to S3 cache", function_identifier,
-                                 exc_info=True)
-        finally:
-            if os.path.isfile(local_path):
-                os.remove(local_path)
-
-    # --- helpers ----------------------------------------------------------
-
-    def _manifest(self, result, size):
-        import numpy
-        return {
-            'schema_version': _MANIFEST_SCHEMA_VERSION,
-            'packages': {'xarray': xr.__version__, 'pandas': pd.__version__,
-                         'numpy': numpy.__version__},
-            'dtype': str(getattr(result, 'dtype', '')),
-            'shape': list(getattr(result, 'shape', ())),
-            'bytes': size,
-            'epoch': self._epoch,
-        }
-
-    def _read_manifest(self, client, key):
-        try:
-            response = client.get_object(Bucket=self._bucket, Key=key + '.manifest.json')
-            return json.loads(response['Body'].read())
-        except Exception:
-            # Missing manifest, no permission, malformed JSON -- all mean the
-            # entry is not usable, which is a miss.
-            return None
-
-    def _local_staging_path(self, function_identifier):
-        """Scratch path for the netCDF file on its way to or from S3.
-
-        netCDF needs a real file, so bytes land on local disk in transit. Kept
-        under the existing RESULTCACHING_HOME so container disk budgeting does
-        not have to learn about a second location.
-        """
-        return os.path.join(self._storage_directory, '_s3_staging', function_identifier + '.nc')
 
 
 
@@ -793,5 +836,5 @@ cache = _MemoryStorage
 store = _DiskStorage
 store_dict = _DictStorage
 store_xarray = _XarrayStorage
-store_xarray_s3 = _S3XarrayStorage
+store_xarray_s3 = _XarrayStorage
 store_netcdf = _NetcdfStorage
