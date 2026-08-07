@@ -2,6 +2,7 @@ from collections import defaultdict, OrderedDict
 
 import inspect
 import itertools
+import json
 import logging
 import numpy as np
 import pandas as pd
@@ -142,25 +143,56 @@ class _DiskStorage(_Storage):
             return pd.read_pickle(f)['data']
 
 
+
+def _netcdf_walk_coords(assembly):
+    """Yield (name, (dims, values)) for every coord, expanding MultiIndex levels."""
+    for name, values in assembly.coords.items():
+        is_index = name in assembly.dims
+        if is_index and values.variable.level_names:
+            for level in values.variable.level_names:
+                level_values = assembly.coords[level]
+                yield level, (level_values.dims, level_values.values)
+        else:
+            yield name, (values.dims, values.values)
+
+
+def _netcdf_save(result, savepath):
+    """Write an xarray result to netCDF with MultiIndex coords flattened.
+
+    The flattening is the point: MultiIndex round-tripping is the least stable
+    part of the xarray/pandas boundary across versions, so it is resolved to
+    plain coords on the way out and rebuilt by the caller on the way in.
+    """
+    result_coords = [coord for coord, values in _netcdf_walk_coords(result)]
+    # `list(...)`: recent xarray rejects a KeysView here, which is why the
+    # pre-existing _NetcdfStorage writer raised TypeError on any assembly.
+    indexes = list(result.indexes.keys())
+    if indexes:
+        result = result.reset_index(indexes)
+    # the reset suffixes single-index coordinates with '_'
+    coords = {}
+    for coord, values in _netcdf_walk_coords(result):
+        if coord not in result_coords:
+            assert coord.endswith('_') and coord[:-1] in result_coords
+            coord = coord[:-1]
+        coords[coord] = values
+    result = type(result)(result.values, coords=coords, dims=result.dims)
+    result.to_netcdf(savepath)
+
+
+def _netcdf_load(path):
+    return xr.open_dataarray(path)
+
+
 class _NetcdfStorage(_DiskStorage):
     def storage_path(self, function_identifier):
         return os.path.join(self._storage_directory, function_identifier + '.nc')
 
     def save_file(self, result, savepath_part):
-        result_coords = [coord for coord, values in self.walk_coords(result)]
-        result = result.reset_index(result.indexes.keys())
-        # for some reason, the above operation suffixes single-index coordinates with _
-        coords = {}
-        for coord, values in self.walk_coords(result):
-            if coord not in result_coords:
-                assert coord.endswith('_') and coord[:-1] in result_coords
-                coord = coord[:-1]
-            coords[coord] = values
-        result = type(result)(result.values, coords=coords, dims=result.dims)
-        result.to_netcdf(savepath_part)
+        _netcdf_save(result, savepath_part)
 
     def load_file(self, path):
-        return xr.open_dataarray(path)
+        return _netcdf_load(path)
 
     @classmethod
     def walk_coords(cls, assembly):
@@ -251,6 +283,85 @@ class _DictStorage(_DiskStorage):
         assert len(call_args) == 1 and list(call_args.keys())[0] == self._dict_key
         keys = list(call_args.values())[0]
         return type(data)((key, value) for key, value in data.items() if key in keys)
+
+
+# --------------------------------------------------------------------------
+# netCDF + manifest format for _XarrayStorage
+#
+# The default format is pickle, which cannot be read back across a pandas or
+# xarray upgrade -- a cache written before an environment bump becomes so much
+# dead weight, and `pd.read_pickle` raises rather than missing cleanly. That is
+# tolerable for a scratch cache on one machine and not tolerable for a shared,
+# long-lived one.
+#
+# Setting RESULTCACHING_FORMAT=netcdf switches to netCDF plus a JSON manifest.
+# netCDF is self-describing and reads back across versions, and the manifest
+# records what wrote the entry so an incompatible one can be recognised and
+# skipped instead of raising.
+#
+# The two formats use different file extensions, so switching does not corrupt
+# or collide with an existing cache -- it simply misses and recomputes.
+# --------------------------------------------------------------------------
+
+# Bump when the on-disk layout changes in a way older readers cannot handle.
+_MANIFEST_SCHEMA_VERSION = 1
+
+_FORMAT_VAR = 'RESULTCACHING_FORMAT'
+
+
+def use_netcdf_format() -> bool:
+    """True if xarray results should be stored as netCDF + manifest."""
+    return os.getenv(_FORMAT_VAR, 'pickle').strip().lower() in ('netcdf', 'nc')
+
+
+def _manifest_path(storage_path):
+    return storage_path + '.manifest.json'
+
+
+def _write_manifest(storage_path, result):
+    """Record what produced this entry, next to the entry itself."""
+    import numpy
+    import xarray
+    manifest = {
+        'schema_version': _MANIFEST_SCHEMA_VERSION,
+        'packages': {'xarray': xarray.__version__, 'pandas': pd.__version__,
+                     'numpy': numpy.__version__},
+        'dtype': str(getattr(result, 'dtype', '')),
+        'shape': list(getattr(result, 'shape', ())),
+        'bytes': os.path.getsize(storage_path) if os.path.isfile(storage_path) else None,
+    }
+    with open(_manifest_path(storage_path), 'w') as f:
+        json.dump(manifest, f, sort_keys=True)
+
+
+def _manifest_is_usable(storage_path) -> bool:
+    """Whether this entry can be trusted enough to attempt a read.
+
+    Deliberately cheap: schema version and byte size only. Writes are atomic
+    (temp file then rename) so a torn file is not a realistic failure mode, and
+    checksumming a multi-gigabyte activation array on every read would cost far
+    more than the extraction it saves. The manifest still records a size so a
+    truncated or externally-mangled file is caught.
+    """
+    path = _manifest_path(storage_path)
+    if not os.path.isfile(path):
+        # Written by an older version, or the manifest was lost. Treat as
+        # unusable rather than guessing -- recomputing is always safe.
+        return False
+    try:
+        with open(path) as f:
+            manifest = json.load(f)
+    except Exception:
+        return False
+    if manifest.get('schema_version') != _MANIFEST_SCHEMA_VERSION:
+        _logger = logging.getLogger(__name__)
+        _logger.debug(f"Cache entry {storage_path} has schema_version "
+                      f"{manifest.get('schema_version')}, expected {_MANIFEST_SCHEMA_VERSION}")
+        return False
+    expected_bytes = manifest.get('bytes')
+    if expected_bytes is not None and os.path.getsize(storage_path) != expected_bytes:
+        return False
+    return True
 
 
 class _XarrayStorage(_DiskStorage):
@@ -401,6 +512,56 @@ class _XarrayStorage(_DiskStorage):
         if dims[0] == coord:
             return s
         return s.stack(**{dims[0]: [coord]})
+
+
+    # --- format selection -------------------------------------------------
+    # Overridden from _DiskStorage so a shared cache can use a format that
+    # survives a pandas/xarray upgrade. See use_netcdf_format().
+
+    def storage_path(self, function_identifier):
+        extension = '.nc' if use_netcdf_format() else '.pkl'
+        return os.path.join(self._storage_directory, function_identifier + extension)
+
+    def save_file(self, result, savepath_part):
+        if not use_netcdf_format():
+            return super().save_file(result, savepath_part)
+        # Flattens MultiIndex coords before writing -- the part of the
+        # xarray/pandas boundary that does not round-trip across versions.
+        _netcdf_save(result, savepath_part)
+
+    def save(self, result, function_identifier):
+        super().save(result, function_identifier)
+        if use_netcdf_format():
+            # After super().save() has renamed the temp file into place, so the
+            # manifest can record the final size.
+            try:
+                _write_manifest(self.storage_path(function_identifier), result)
+            except Exception:
+                logging.getLogger(__name__).debug("Could not write cache manifest", exc_info=True)
+
+    def load_file(self, path):
+        if not use_netcdf_format():
+            return super().load_file(path)
+        return _netcdf_load(path)
+
+    def is_stored(self, function_identifier):
+        if not super().is_stored(function_identifier):
+            return False
+        if not use_netcdf_format():
+            return True
+        storage_path = self.storage_path(function_identifier)
+        if not _manifest_is_usable(storage_path):
+            return False
+        # Final guard: an entry that cannot actually be opened must read as a
+        # miss, never as an error. This is what makes an environment upgrade
+        # cost one recomputation instead of failing the run.
+        try:
+            self.load_file(storage_path).close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                f"Cache entry {storage_path} is unreadable in this environment; recomputing.")
+            return False
+        return True
 
 
 class _MemoryStorage(_Storage):
