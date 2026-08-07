@@ -34,3 +34,34 @@ changed through the environment variable `RESULTCACHING_HOME`.
 | RESULTCACHING_DISABLE | * `'1'` to disable loading and saving of results, functions will be called directly |
 |                       | * `'candidate_models.score_model,model_tools.activations`' to disable loading and saving of function identifiers starting with one of the specifiers separated by a comma (e.g. any package or function inside `model_tools.activations` will not be considered) |
 | RESULTCACHING_CACHEDONLY | If enabled, raises an error when trying to run a function that does not have its result already cached (follows the same matching rules as `RESULTCACHING_DISABLE`) |
+| RESULTCACHING_FORMAT | storage format for xarray results: `pickle` (default) or `netcdf`/`nc`. netCDF writes a `.nc` file plus a sidecar `.manifest.json` recording the class, dtype, shape, schema version and package versions |
+| RESULTCACHING_S3_BUCKET | S3 bucket for xarray results. **Setting this is what enables the S3 backend** — unset means disk only. Requires the `s3` extra (`pip install result_caching[s3]`) |
+| RESULTCACHING_S3_PREFIX | key prefix within the bucket, `result_caching` by default |
+| RESULTCACHING_S3_EPOCH | prefix segment for bulk invalidation, `1` by default. Bumping it orphans every existing entry at once, which is cheaper than deleting them when a lifecycle rule will expire them anyway |
+| RESULTCACHING_S3_MAX_GB | refuse to write entries larger than this, `50` by default. The size distribution has a long tail — one vision model projects to 146 GB against a p90 of 31 GB — and that tail is most of the storage bill for a fraction of the benefit |
+
+### Storage formats
+
+`pickle` (the default) is fast but tied to the exact pandas/xarray/numpy
+versions that wrote it. `netcdf` is portable across environment upgrades, at the
+cost of flattening MultiIndex coordinates on write and rebuilding them on load.
+
+The default is deliberately still `pickle` so that existing warm caches stay
+valid; opt in per environment rather than globally.
+
+Either way an unreadable entry is treated as a **miss, never an error** — a
+cache written before a dependency bump is recomputed rather than raising.
+
+### S3 backend
+
+Set `RESULTCACHING_S3_BUCKET` to make xarray results readable and writable
+across machines, which is what makes the cache useful for ephemeral containers
+where local disk does not survive the job.
+
+Entries are always netCDF on S3 regardless of `RESULTCACHING_FORMAT`; the data
+object is written **before** its manifest and a read requires the manifest, so
+an interrupted write is indistinguishable from a miss and needs no temp-key
+dance (S3 PUTs are already atomic).
+
+boto3 is an optional dependency. If it is missing, the backend degrades to "no
+cache" rather than breaking the import.
