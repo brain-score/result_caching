@@ -169,3 +169,103 @@ class TestPickleFormatUnaffected:
         assert calls['n'] == 1
         assert any(p.suffix == '.pkl' for p in cache_dir.rglob('*') if p.is_file())
         assert not any(p.name.endswith('.manifest.json') for p in cache_dir.rglob('*'))
+
+
+class TestRealAssemblySubclass:
+    """Regression: the writer used to rebuild with `type(result)(...)`.
+
+    brainio's DataAssembly subclasses re-derive a MultiIndex from same-dim
+    coords in __init__, so that reconstruction immediately undid the flattening
+    and `to_netcdf` raised NotImplementedError on every real assembly. Tests
+    using a plain xr.DataArray could not see it, because DataArray does not
+    re-derive anything.
+
+    Skipped where brainscore_core is unavailable; result_caching does not depend
+    on it.
+    """
+
+    @pytest.fixture
+    def assembly_class(self):
+        mod = pytest.importorskip(
+            'brainscore_core.supported_data_standards.brainio.assemblies')
+        return mod.NeuroidAssembly
+
+    def _assembly(self, cls, n_stim=3, n_neuroid=8):
+        return cls(
+            np.arange(n_stim * n_neuroid, dtype='float32').reshape(n_stim, n_neuroid),
+            coords={'stimulus_path': ('presentation', [f'/i/{i}.png' for i in range(n_stim)]),
+                    'stimulus_id': ('presentation', [f's{i}' for i in range(n_stim)]),
+                    'neuroid_id': ('neuroid', list(range(n_neuroid))),
+                    'layer': ('neuroid', ['fc'] * n_neuroid),
+                    'channel': ('neuroid', list(range(n_neuroid)))},
+            dims=['presentation', 'neuroid'])
+
+    def test_multiindex_assembly_round_trips(self, cache_dir, netcdf, assembly_class):
+        source = self._assembly(assembly_class)
+        assert len(source.indexes) == 2, "fixture should have MultiIndex on both dims"
+        calls = {'n': 0}
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            calls['n'] += 1
+            return source
+
+        first = compute(identifier='alexnet', layers=['fc'])
+        second = compute(identifier='alexnet', layers=['fc'])
+        assert calls['n'] == 1, "second call must hit the cache"
+        np.testing.assert_array_equal(
+            np.asarray(first.transpose('presentation', 'neuroid')),
+            np.asarray(second.transpose('presentation', 'neuroid')))
+
+    def test_assembly_class_is_restored(self, cache_dir, netcdf, assembly_class):
+        """Written as a plain DataArray; the subclass must come back, or callers
+        lose the assembly API they stored."""
+        source = self._assembly(assembly_class)
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            return source
+
+        compute(identifier='alexnet', layers=['fc'])
+        loaded = compute(identifier='alexnet', layers=['fc'])
+        assert type(loaded) is assembly_class, type(loaded)
+
+    def test_multiindex_is_restored(self, cache_dir, netcdf, assembly_class):
+        source = self._assembly(assembly_class)
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            return source
+
+        compute(identifier='alexnet', layers=['fc'])
+        loaded = compute(identifier='alexnet', layers=['fc'])
+        assert {n: list(loaded.indexes[n].names) for n in loaded.indexes} == \
+               {n: list(source.indexes[n].names) for n in source.indexes}
+
+    def test_manifest_records_the_class(self, cache_dir, netcdf, assembly_class):
+        source = self._assembly(assembly_class)
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            return source
+
+        compute(identifier='alexnet', layers=['fc'])
+        manifest = json.loads(next(cache_dir.rglob('*.manifest.json')).read_text())
+        assert manifest['class']['name'] == 'NeuroidAssembly'
+
+    def test_unresolvable_class_still_loads(self, cache_dir, netcdf, assembly_class):
+        """If the recorded class cannot be imported, fall back to a DataArray
+        rather than failing the read."""
+        source = self._assembly(assembly_class)
+
+        @store_xarray(identifier_ignore=[], combine_fields={'layers': 'layer'})
+        def compute(identifier, layers):
+            return source
+
+        compute(identifier='alexnet', layers=['fc'])
+        manifest_file = next(cache_dir.rglob('*.manifest.json'))
+        manifest = json.loads(manifest_file.read_text())
+        manifest['class'] = {'module': 'no.such.module', 'name': 'Gone'}
+        manifest_file.write_text(json.dumps(manifest))
+        loaded = compute(identifier='alexnet', layers=['fc'])   # must not raise
+        assert loaded is not None

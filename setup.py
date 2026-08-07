@@ -12,13 +12,20 @@ requirements = [
     "dask[array]",  # for `to_netcdf`
 ]
 
+# boto3 is only needed for the S3-backed storage; every other backend is
+# stdlib + xarray. Kept out of install_requires so importing result_caching
+# never drags in an AWS SDK.
+extras_require = {
+    "s3": ["boto3"],
+}
+
 test_requirements = [
     "pytest",
 ]
 
 setup(
     name='result_caching',
-    version='0.1.0',
+    version='0.4',
     description="Cache results for re-use",
     long_description=readme,
     long_description_content_type='text/markdown',
@@ -27,6 +34,7 @@ setup(
     url='https://github.com/brain-score/result_caching',
     packages=find_packages(exclude=['tests']),
     install_requires=requirements,
+    extras_require=extras_require,
     license="MIT license",
     zip_safe=False,
     keywords='caching',
