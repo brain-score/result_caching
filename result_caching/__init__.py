@@ -53,6 +53,29 @@ def _match_identifier(function_identifier, match_value):
     return any(function_identifier.startswith(disabled_module) for disabled_module in disabled_modules)
 
 
+def log_outcome(logger, outcome: str, function_identifier: str, detail: str = '') -> None:
+    """Emit one INFO line recording what the cache did for this call.
+
+    Every other message in this module is DEBUG, which production never emits,
+    so a completed run carried no evidence of whether the cache did anything --
+    hit rate was unmeasurable after the fact, which defeats the point of having
+    a shared cache at all.
+
+    One line per cached call, at INFO, greppable as ``RESULTCACHING outcome=``.
+
+    Outcomes:
+      ``hit``      served entirely from storage; the function did not run
+      ``miss``     nothing stored; the function ran and the result was saved
+      ``partial``  some fields loaded, the rest computed and merged in. Only
+                   reachable with ``combine_fields``, and it is the *normal*
+                   case for the activation cache, where one entry accumulates
+                   layers across calls -- reporting it as a plain hit or miss
+                   would misstate what happened.
+      ``disabled`` caching is off for this identifier; nothing read or written
+    """
+    logger.info("RESULTCACHING outcome=%s%s key=%s", outcome, detail, function_identifier)
+
+
 class NotCachedError(Exception):
     pass
 
@@ -72,14 +95,17 @@ class _Storage(object):
         def wrapper(*args, **kwargs):
             call_args = self.getcallargs(function, *args, **kwargs)
             function_identifier = self.get_function_identifier(function, call_args)
-            if is_enabled(function_identifier) and self.is_stored(function_identifier):
+            enabled = is_enabled(function_identifier)
+            if enabled and self.is_stored(function_identifier):
                 self._logger.debug("Loading from storage: {}".format(function_identifier))
+                log_outcome(self._logger, 'hit', function_identifier)
                 return self.load(function_identifier)
             if cached_only(function_identifier):
                 raise NotCachedError(f"No result stored for '{function_identifier}'")
             self._logger.debug("Running function: {}".format(function_identifier))
+            log_outcome(self._logger, 'miss' if enabled else 'disabled', function_identifier)
             result = function(*args, **kwargs)
-            if is_enabled(function_identifier):
+            if enabled:
                 self._logger.debug("Saving to storage: {}".format(function_identifier))
                 self.save(result, function_identifier)
             return result
@@ -272,6 +298,7 @@ class _DictStorage(_DiskStorage):
                 infile_missing_call_args = self.missing_call_args(infile_call_args, stored_result)
                 if len(infile_missing_call_args) == 0:
                     # nothing else to run, but still need to filter
+                    log_outcome(self._logger, 'hit', function_identifier)
                     result = stored_result
                     reduced_call_args = None
                 else:
@@ -280,12 +307,18 @@ class _DictStorage(_DiskStorage):
                     infile_missing_call_args = {self._dict_key: infile_missing_call_args}
                     reduced_call_args = {**non_variable_call_args, **infile_missing_call_args}
                     self._logger.debug(f"Computing missing: {reduced_call_args}")
+                    log_outcome(self._logger, 'partial', function_identifier,
+                                detail=f" missing={sorted(infile_missing_call_args[self._dict_key])}")
             if reduced_call_args:
                 if cached_only(function_identifier):
                     raise NotCachedError(f"The following arguments for '{function_identifier}' "
                                          f"are not stored: {reduced_call_args}")
                 # run function if some args are uncomputed
                 self._logger.debug(f"Running function: {function_identifier}")
+                if stored_result is None:  # nothing loaded => not a partial
+                    log_outcome(self._logger,
+                                'miss' if is_enabled(function_identifier) else 'disabled',
+                                function_identifier)
                 result = function(**reduced_call_args)
                 if not self.callargs_present(result, {self._dict_key: reduced_call_args[self._dict_key]}):
                     raise ValueError("result does not contain requested keys")
@@ -478,6 +511,7 @@ class _XarrayStorage(_DiskStorage):
                     else self.filter_coords(infile_call_args, getattr(stored_result, next(iter(vars(stored_result)))))
                 if len(missing_call_args) == 0:
                     # nothing else to run, but still need to filter
+                    log_outcome(self._logger, 'hit', function_identifier)
                     result = stored_result
                     reduced_call_args = None
                 else:
@@ -488,11 +522,21 @@ class _XarrayStorage(_DiskStorage):
                                          for key, value in missing_call_args.items()}
                     reduced_call_args = {**non_variable_call_args, **missing_call_args}
                     self._logger.debug(f"Computing missing: {reduced_call_args}")
+                    # values, not keys: missing_call_args has been remapped to
+                    # {outer_arg: values}, so sorted() would report the arg name.
+                    _missing = sorted(str(value) for values in missing_call_args.values()
+                                      for value in np.atleast_1d(values))
+                    log_outcome(self._logger, 'partial', function_identifier,
+                                detail=f" missing={_missing}")
             if reduced_call_args:
                 if cached_only(function_identifier):
                     raise NotCachedError(f"The following arguments for '{function_identifier}' "
                                          f"are not stored: {reduced_call_args}")
                 self._logger.debug(f"Running function: {function_identifier}")
+                if stored_result is None:  # nothing loaded => not a partial
+                    log_outcome(self._logger,
+                                'miss' if is_enabled(function_identifier) else 'disabled',
+                                function_identifier)
                 # run function if some args are uncomputed
                 result = function(**reduced_call_args)
                 if stored_result is not None:
