@@ -25,7 +25,7 @@ test_requirements = [
 
 setup(
     name='result_caching',
-    version='0.4',
+    version='0.5',
     description="Cache results for re-use",
     long_description=readme,
     long_description_content_type='text/markdown',
